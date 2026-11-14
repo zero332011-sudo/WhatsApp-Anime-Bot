@@ -1,80 +1,82 @@
 import { getDB, saveDB } from '../database/db.js';
-import { isOwner } from '../utils/permissions.js';
-import { getText } from '../utils/helpers.js';
+const MAX_WARNINGS = 3;
+const MUTE_DURATION = 30 * 60 * 1000;
 
-export async function ownerTools(sock, message) {
-  const jid = message.key.remoteJid;
-  const sender = message.key.participant || jid;
-  const text = getText(message).trim();
-
-  const commands = [
-    '.اضافه ايموجي',
-    '.اضافه ملصق',
-    '.حذف ايموجي',
-    '.حذف ملصق'
-  ];
-
-  const command = commands.find(cmd =>
-    text.startsWith(cmd + ' ')
-  );
-
-  if (!command) return false;
-
-  if (!isOwner(sender)) {
-    await sock.sendMessage(jid, {
-      text: '⛔ هذا الأمر خاص بالمطور الأساسي فقط.'
-    });
-    return true;
-  }
-
-  const value = text.slice(command.length).trim();
-
-  if (!value) {
-    await sock.sendMessage(jid, {
-      text: `❌ طريقة الاستخدام:
-${command} العنصر`
-    });
-    return true;
-  }
-
+export function addWarning(jid, userId) {
   const db = getDB();
 
-  db.blockedEmojis ||= [];
-  db.blockedStickers ||= [];
+  db.users ||= {};
+  db.muted ||= {};
 
-  if (command === '.اضافه ايموجي') {
-    if (!db.blockedEmojis.includes(value)) {
-      db.blockedEmojis.push(value);
-    }
-  }
+  db.users[userId] ||= {
+    jid: userId,
+    nickname: 'عضو جديد',
+    rank: 17,
+    bank: 40,
+    wallet: 0,
+    warnings: 0
+  };
 
-  if (command === '.حذف ايموجي') {
-    db.blockedEmojis = db.blockedEmojis.filter(
-      item => item !== value
-    );
-  }
+  const user = db.users[userId];
 
-  if (command === '.اضافه ملصق') {
-    if (!db.blockedStickers.includes(value)) {
-      db.blockedStickers.push(value);
-    }
-  }
+  user.warnings = (user.warnings || 0) + 1;
 
-  if (command === '.حذف ملصق') {
-    db.blockedStickers = db.blockedStickers.filter(
-      item => item !== value
-    );
+  let muted = false;
+
+  if (user.warnings >= MAX_WARNINGS) {
+    db.muted[userId] = {
+      group: jid,
+      until: Date.now() + MUTE_DURATION
+    };
+
+    user.warnings = 0;
+    muted = true;
   }
 
   saveDB(db);
 
-  await sock.sendMessage(jid, {
-    text: `✅ تمت العملية بنجاح.
+  return {
+    warnings: user.warnings,
+    muted,
+    duration: MUTE_DURATION
+  };
+}
 
-📌 العملية: ${command}
-📝 العنصر: ${value}`
-  });
+export function isMuted(userId) {
+  const db = getDB();
 
-  
+  db.muted ||= {};
+
+  const mute = db.muted[userId];
+
+  if (!mute) return false;
+
+  if (mute.until <= Date.now()) {
+    delete db.muted[userId];
+    saveDB(db);
+    return false;
+  }
+
   return true;
+}
+
+export function removeMute(userId) {
+  const db = getDB();
+
+  db.muted ||= {};
+  delete db.muted[userId];
+
+  saveDB(db);
+
+  return true;
+}
+
+export function clearWarnings(userId) {
+  const db = getDB();
+
+  if (db.users?.[userId]) {
+    db.users[userId].warnings = 
+      0;
+    saveDB(db);
+  }
 }
